@@ -1,5 +1,5 @@
 project:
-  name: quickstart-superwerker
+  name: cfn-ps-superwerker
   owner: quickstart@amazon.com
   package_lambda: false
   regions:
