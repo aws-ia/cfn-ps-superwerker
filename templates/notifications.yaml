@@ -6,24 +6,22 @@ Metadata:
     config:
       ignore_checks:
         - E9007
-
 Parameters:
   NotificationsMail:
     Type: String
-
 Outputs:
   NotificationTopic:
     Description: Notification topic ARN for ops center creation events
-    Value: !Ref NotificationTopic
-
+    Value:
+      Ref: NotificationTopic
 Resources:
   NotificationTopic:
     Type: AWS::SNS::Topic
     Properties:
       Subscription:
-      - Endpoint: !Ref NotificationsMail
-        Protocol: email
-
+        - Endpoint:
+            Ref: NotificationsMail
+          Protocol: email
   NotificationOpsItemCreated:
     Type: AWS::Serverless::Function
     Properties:
@@ -45,41 +43,17 @@ Resources:
       Runtime: python3.7
       Policies:
         - SNSPublishMessagePolicy:
-            TopicName: !GetAtt NotificationTopic.TopicName
+            TopicName:
+              Fn::GetAtt:
+                - NotificationTopic
+                - TopicName
       Environment:
         Variables:
-          TOPIC_ARN: !Ref NotificationTopic
-      InlineCode: !Sub |-
-        import boto3
-        import json
-        import os
-
-        client = boto3.client('sns')
-
-        def handler(event, context):
-          id = event['detail']['responseElements']['opsItemId']
-          desc = event['detail']['requestParameters']['description']
-          title = event['detail']['requestParameters']['title']
-
-          url = "https://${AWS::Region}.console.aws.amazon.com/systems-manager/opsitems/{}".format(id)
-
-          log({
-            'desc': desc,
-            'event': event,
-            'level': 'info',
-            'msg': 'Publishing new ops item event from CloudTrail to SNS',
-            'title': title,
-            'url': url,
-          })
-
-          message_title = "New OpsItem: {}".format(title)
-          message_body = "{}\n\n{}".format(desc, url)
-
-          client.publish(
-            Message=message_body,
-            Subject=message_title,
-            TopicArn=os.environ['TOPIC_ARN'],
-          )
-
-        def log(msg):
-          print(json.dumps(msg), flush=True)
+          TOPIC_ARN:
+            Ref: NotificationTopic
+      InlineCode:
+        Fn::Sub: "import boto3\nimport json\nimport os\n\nclient = boto3.client('sns')\n\ndef handler(event, context):\n  id = event['detail']['responseElements']['opsItemId']\n  desc = event['detail']['requestParameters']['description']\n\
+          \  title = event['detail']['requestParameters']['title']\n\n  url = \"https://${AWS::Region}.console.aws.amazon.com/systems-manager/opsitems/{}\".format(id)\n\n  log({\n    'desc': desc,\n   \
+          \ 'event': event,\n    'level': 'info',\n    'msg': 'Publishing new ops item event from CloudTrail to SNS',\n    'title': title,\n    'url': url,\n  })\n\n  message_title = \"New OpsItem: {}\"\
+          .format(title)\n  message_body = \"{}\\n\\n{}\".format(desc, url)\n\n  client.publish(\n    Message=message_body,\n    Subject=message_title,\n    TopicArn=os.environ['TOPIC_ARN'],\n  )\n\ndef\
+          \ log(msg):\n  print(json.dumps(msg), flush=True)"

@@ -8,33 +8,33 @@ Metadata:
         - E9007
   SuperwerkerVersion: 0.13.2
   QuickStartDocumentation:
-    EntrypointName: "Parameters for launching Superwerker"
-    Order: "1"
+    EntrypointName: Parameters for launching Superwerker
+    Order: '1'
   AWS::CloudFormation::Interface:
     ParameterGroups:
-    - Label:
-        default: Features
-      Parameters:
-      - IncludeBudget
-      - IncludeGuardDuty
-      - IncludeSecurityHub
-      - IncludeBackup
-      - IncludeServiceControlPolicies
-    - Label:
-        default: Domain configuration
-      Parameters:
-      - Domain
-      - Subdomain
-    - Label:
-        default: Notifications
-      Parameters:
-      - NotificationsMail
-    - Label:
-        default: AWS Quick Start configuration
-      Parameters:
-      - QSS3BucketName
-      - QSS3KeyPrefix
-      - QSS3BucketRegion
+      - Label:
+          default: Features
+        Parameters:
+          - IncludeBudget
+          - IncludeGuardDuty
+          - IncludeSecurityHub
+          - IncludeBackup
+          - IncludeServiceControlPolicies
+      - Label:
+          default: Domain configuration
+        Parameters:
+          - Domain
+          - Subdomain
+      - Label:
+          default: Notifications
+        Parameters:
+          - NotificationsMail
+      - Label:
+          default: AWS Quick Start configuration
+        Parameters:
+          - QSS3BucketName
+          - QSS3KeyPrefix
+          - QSS3BucketRegion
     ParameterLabels:
       Domain:
         default: Domain for automated DNS configuration
@@ -69,8 +69,8 @@ Parameters:
   NotificationsMail:
     Type: String
     Description: Mail address used for notifications
-    Default: ""
-    AllowedPattern: "(^$|^.*@.*\\..*$)"
+    Default: ''
+    AllowedPattern: (^$|^.*@.*\..*$)
   IncludeBudget:
     AllowedValues:
       - 'Yes'
@@ -107,49 +107,55 @@ Parameters:
     Type: String
     Description: Enable service control policies in AWS organizations
   QSS3BucketName:
-    AllowedPattern: '^[0-9a-zA-Z]+([0-9a-zA-Z-]*[0-9a-zA-Z])*$'
-    ConstraintDescription: The Quick Start bucket name can include numbers, lowercase
-      letters, uppercase letters, and hyphens (-). It cannot start or end with a
-      hyphen (-).
+    AllowedPattern: ^[0-9a-zA-Z]+([0-9a-zA-Z-]*[0-9a-zA-Z])*$
+    ConstraintDescription: The Quick Start bucket name can include numbers, lowercase letters, uppercase letters, and hyphens (-). It cannot start or end with a hyphen (-).
     Default: aws-ia-us-east-1
-    Description: Name of the S3 bucket for your copy of the Quick Start assets.
-      Keep the default name unless you are customizing the template.
-      Changing the name updates code references to point to a new Quick
-      Start location. This name can include numbers, lowercase letters,
-      uppercase letters, and hyphens, but do not start or end with a hyphen (-).
-      See https://aws-quickstart.github.io/option1.html.
+    Description: Name of the S3 bucket for your copy of the Quick Start assets. Keep the default name unless you are customizing the template. Changing the name updates code references to point to a new
+      Quick Start location. This name can include numbers, lowercase letters, uppercase letters, and hyphens, but do not start or end with a hyphen (-). See https://aws-quickstart.github.io/option1.html.
     Type: String
   QSS3BucketRegion:
-    Default: 'us-east-1'
-    Description: 'AWS Region where the Quick Start S3 bucket (QSS3BucketName) is
-    hosted. Keep the default Region unless you are customizing the template.
-    Changing this Region updates code references to point to a new Quick Start location.
-    When using your own bucket, specify the Region.
-    See https://aws-quickstart.github.io/option1.html.'
+    Default: us-east-1
+    Description: AWS Region where the Quick Start S3 bucket (QSS3BucketName) is hosted. Keep the default Region unless you are customizing the template. Changing this Region updates code references to point
+      to a new Quick Start location. When using your own bucket, specify the Region. See https://aws-quickstart.github.io/option1.html.
     Type: String
   QSS3KeyPrefix:
-    AllowedPattern: '^([0-9a-zA-Z-.:]+/)*$'
-    ConstraintDescription: The Quick Start S3 key prefix can include numbers, lowercase letters,
-      uppercase letters, hyphens (-), colon (:), and forward slashes (/).
+    AllowedPattern: ^([0-9a-zA-Z-.:]+/)*$
+    ConstraintDescription: The Quick Start S3 key prefix can include numbers, lowercase letters, uppercase letters, hyphens (-), colon (:), and forward slashes (/).
     Default: cfn-ps-superwerker/
-    Description: S3 key prefix that is used to simulate a directory for your copy of the
-      Quick Start assets. Keep the default prefix unless you are customizing
-      the template. Changing this prefix updates code references to point to
-      a new Quick Start location. This prefix can include numbers, lowercase
-      letters, uppercase letters, hyphens (-), colon (:), and forward slashes (/).
-      See https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingMetadata.html
+    Description: S3 key prefix that is used to simulate a directory for your copy of the Quick Start assets. Keep the default prefix unless you are customizing the template. Changing this prefix updates
+      code references to point to a new Quick Start location. This prefix can include numbers, lowercase letters, uppercase letters, hyphens (-), colon (:), and forward slashes (/). See https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingMetadata.html
       and https://aws-quickstart.github.io/option1.html.
     Type: String
-
 Conditions:
-  UsingDefaultBucket: !Equals [!Ref QSS3BucketName, 'aws-ia-us-east-1']
-  IncludeNotifications: !Not [!Equals [ !Ref NotificationsMail, '' ]]
-  IncludeBudget: !Equals [ !Ref IncludeBudget, 'Yes' ]
-  IncludeGuardDuty: !Equals [ !Ref IncludeGuardDuty, 'Yes' ]
-  IncludeSecurityHub: !Equals [ !Ref IncludeSecurityHub, 'Yes' ]
-  IncludeBackup: !Equals [ !Ref IncludeBackup, 'Yes' ]
-  IncludeServiceControlPolicies: !Equals [ !Ref IncludeServiceControlPolicies, 'Yes' ]
-
+  UsingDefaultBucket:
+    Fn::Equals:
+      - Ref: QSS3BucketName
+      - aws-ia-us-east-1
+  IncludeNotifications:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: NotificationsMail
+          - ''
+  IncludeBudget:
+    Fn::Equals:
+      - Ref: IncludeBudget
+      - 'Yes'
+  IncludeGuardDuty:
+    Fn::Equals:
+      - Ref: IncludeGuardDuty
+      - 'Yes'
+  IncludeSecurityHub:
+    Fn::Equals:
+      - Ref: IncludeSecurityHub
+      - 'Yes'
+  IncludeBackup:
+    Fn::Equals:
+      - Ref: IncludeBackup
+      - 'Yes'
+  IncludeServiceControlPolicies:
+    Fn::Equals:
+      - Ref: IncludeServiceControlPolicies
+      - 'Yes'
 Resources:
   Budget:
     Condition: IncludeBudget
@@ -157,32 +163,56 @@ Resources:
     Properties:
       TemplateURL:
         Fn::Sub:
-          - 'https://${S3Bucket}.s3.${S3Region}.${AWS::URLSuffix}/${QSS3KeyPrefix}templates/budget.yaml'
-          - S3Region: !If [UsingDefaultBucket, !Sub '${AWS::Region}', !Ref QSS3BucketRegion]
-            S3Bucket: !If [UsingDefaultBucket, !Sub '${QSS3BucketName}-${AWS::Region}', !Ref QSS3BucketName]
-
+          - https://${S3Bucket}.s3.${S3Region}.${AWS::URLSuffix}/${QSS3KeyPrefix}templates/budget.yaml
+          - S3Region:
+              Fn::If:
+                - UsingDefaultBucket
+                - Fn::Sub: ${AWS::Region}
+                - Ref: QSS3BucketRegion
+            S3Bucket:
+              Fn::If:
+                - UsingDefaultBucket
+                - Fn::Sub: ${QSS3BucketName}-${AWS::Region}
+                - Ref: QSS3BucketName
   ControlTower:
     Type: AWS::CloudFormation::Stack
     Properties:
       TemplateURL:
         Fn::Sub:
-          - 'https://${S3Bucket}.s3.${S3Region}.${AWS::URLSuffix}/${QSS3KeyPrefix}templates/control-tower.yaml'
-          - S3Region: !If [UsingDefaultBucket, !Sub '${AWS::Region}', !Ref QSS3BucketRegion]
-            S3Bucket: !If [UsingDefaultBucket, !Sub '${QSS3BucketName}-${AWS::Region}', !Ref QSS3BucketName]
+          - https://${S3Bucket}.s3.${S3Region}.${AWS::URLSuffix}/${QSS3KeyPrefix}templates/control-tower.yaml
+          - S3Region:
+              Fn::If:
+                - UsingDefaultBucket
+                - Fn::Sub: ${AWS::Region}
+                - Ref: QSS3BucketRegion
+            S3Bucket:
+              Fn::If:
+                - UsingDefaultBucket
+                - Fn::Sub: ${QSS3BucketName}-${AWS::Region}
+                - Ref: QSS3BucketName
       Parameters:
-        AuditAWSAccountEmail: !GetAtt GeneratedAuditAWSAccountEmail.email
-        LogArchiveAWSAccountEmail: !GetAtt GeneratedLogArchiveAWSAccountEmail.email
-
+        AuditAWSAccountEmail:
+          Fn::GetAtt:
+            - GeneratedAuditAWSAccountEmail
+            - email
+        LogArchiveAWSAccountEmail:
+          Fn::GetAtt:
+            - GeneratedLogArchiveAWSAccountEmail
+            - email
   GeneratedAuditAWSAccountEmail:
     Type: AWS::CloudFormation::CustomResource
     Properties:
-      ServiceToken: !GetAtt GenerateLogAndOrAuditEmailCustomResource.Arn
-
+      ServiceToken:
+        Fn::GetAtt:
+          - GenerateLogAndOrAuditEmailCustomResource
+          - Arn
   GeneratedLogArchiveAWSAccountEmail:
     Type: AWS::CloudFormation::CustomResource
     Properties:
-      ServiceToken: !GetAtt GenerateLogAndOrAuditEmailCustomResource.Arn
-
+      ServiceToken:
+        Fn::GetAtt:
+          - GenerateLogAndOrAuditEmailCustomResource
+          - Arn
   GenerateLogAndOrAuditEmailCustomResource:
     Type: AWS::Serverless::Function
     Properties:
@@ -191,97 +221,92 @@ Resources:
       Runtime: python3.7
       Policies:
         - LambdaInvokePolicy:
-            FunctionName: !GetAtt RootMail.Outputs.EmailGeneratorFunction
-      InlineCode: !Sub |
-        import boto3
-        import cfnresponse
-        import json
-
-        lambda_client = boto3.client("lambda")
-
-        CREATE = 'Create'
-        DELETE = 'Delete'
-        UPDATE = 'Update'
-
-        def exception_handling(function):
-            def catch(event, context):
-                try:
-                    function(event, context)
-                except Exception as e:
-                    print(e)
-                    print(event)
-                    cfnresponse.send(event, context, cfnresponse.FAILED, {})
-
-            return catch
-
-        @exception_handling
-        def handler(event, context):
-            RequestType = event["RequestType"]
-            Properties = event["ResourceProperties"]
-            LogicalResourceId = event["LogicalResourceId"]
-            PhysicalResourceId = event.get("PhysicalResourceId")
-
-            print('RequestType: {}'.format(RequestType))
-            print('PhysicalResourceId: {}'.format(PhysicalResourceId))
-            print('LogicalResourceId: {}'.format(LogicalResourceId))
-
-            id = PhysicalResourceId
-
-            data = {}
-
-            if RequestType == CREATE or RequestType == UPDATE:
-              lambda_response = lambda_client.invoke(
-                FunctionName='${RootMail.Outputs.EmailGeneratorFunction}'
-              )
-
-              response_json = json.loads(lambda_response['Payload'].read().decode('utf-8'))
-              data['email'] = response_json['email']
-
-            cfnresponse.send(event, context, cfnresponse.SUCCESS, data, id)
-
+            FunctionName:
+              Fn::GetAtt:
+                - RootMail
+                - Outputs.EmailGeneratorFunction
+      InlineCode:
+        Fn::Sub: "import boto3\nimport cfnresponse\nimport json\n\nlambda_client = boto3.client(\"lambda\")\n\nCREATE = 'Create'\nDELETE = 'Delete'\nUPDATE = 'Update'\n\ndef exception_handling(function):\n\
+          \    def catch(event, context):\n        try:\n            function(event, context)\n        except Exception as e:\n            print(e)\n            print(event)\n            cfnresponse.send(event,\
+          \ context, cfnresponse.FAILED, {})\n\n    return catch\n\n@exception_handling\ndef handler(event, context):\n    RequestType = event[\"RequestType\"]\n    Properties = event[\"ResourceProperties\"\
+          ]\n    LogicalResourceId = event[\"LogicalResourceId\"]\n    PhysicalResourceId = event.get(\"PhysicalResourceId\")\n\n    print('RequestType: {}'.format(RequestType))\n    print('PhysicalResourceId:\
+          \ {}'.format(PhysicalResourceId))\n    print('LogicalResourceId: {}'.format(LogicalResourceId))\n\n    id = PhysicalResourceId\n\n    data = {}\n\n    if RequestType == CREATE or RequestType ==\
+          \ UPDATE:\n      lambda_response = lambda_client.invoke(\n        FunctionName='${RootMail.Outputs.EmailGeneratorFunction}'\n      )\n\n      response_json = json.loads(lambda_response['Payload'].read().decode('utf-8'))\n\
+          \      data['email'] = response_json['email']\n\n    cfnresponse.send(event, context, cfnresponse.SUCCESS, data, id)\n"
   GuardDuty:
     Condition: IncludeGuardDuty
     Type: AWS::CloudFormation::Stack
     Properties:
       TemplateURL:
         Fn::Sub:
-          - 'https://${S3Bucket}.s3.${S3Region}.${AWS::URLSuffix}/${QSS3KeyPrefix}templates/guardduty.yaml'
-          - S3Region: !If [UsingDefaultBucket, !Sub '${AWS::Region}', !Ref QSS3BucketRegion]
-            S3Bucket: !If [UsingDefaultBucket, !Sub '${QSS3BucketName}-${AWS::Region}', !Ref QSS3BucketName]
-
+          - https://${S3Bucket}.s3.${S3Region}.${AWS::URLSuffix}/${QSS3KeyPrefix}templates/guardduty.yaml
+          - S3Region:
+              Fn::If:
+                - UsingDefaultBucket
+                - Fn::Sub: ${AWS::Region}
+                - Ref: QSS3BucketRegion
+            S3Bucket:
+              Fn::If:
+                - UsingDefaultBucket
+                - Fn::Sub: ${QSS3BucketName}-${AWS::Region}
+                - Ref: QSS3BucketName
   LivingDocumentation:
     Type: AWS::CloudFormation::Stack
     Properties:
       TemplateURL:
         Fn::Sub:
-          - 'https://${S3Bucket}.s3.${S3Region}.${AWS::URLSuffix}/${QSS3KeyPrefix}templates/living-documentation.yaml'
-          - S3Region: !If [UsingDefaultBucket, !Sub '${AWS::Region}', !Ref QSS3BucketRegion]
-            S3Bucket: !If [UsingDefaultBucket, !Sub '${QSS3BucketName}-${AWS::Region}', !Ref QSS3BucketName]
+          - https://${S3Bucket}.s3.${S3Region}.${AWS::URLSuffix}/${QSS3KeyPrefix}templates/living-documentation.yaml
+          - S3Region:
+              Fn::If:
+                - UsingDefaultBucket
+                - Fn::Sub: ${AWS::Region}
+                - Ref: QSS3BucketRegion
+            S3Bucket:
+              Fn::If:
+                - UsingDefaultBucket
+                - Fn::Sub: ${QSS3BucketName}-${AWS::Region}
+                - Ref: QSS3BucketName
       Parameters:
-        SuperwerkerDomain: !Sub '${Subdomain}.${Domain}'
-
+        SuperwerkerDomain:
+          Fn::Sub: ${Subdomain}.${Domain}
   RootMail:
     Type: AWS::CloudFormation::Stack
     Properties:
       TemplateURL:
         Fn::Sub:
-          - 'https://${S3Bucket}.s3.${S3Region}.${AWS::URLSuffix}/${QSS3KeyPrefix}templates/rootmail.yaml'
-          - S3Region: !If [UsingDefaultBucket, !Sub '${AWS::Region}', !Ref QSS3BucketRegion]
-            S3Bucket: !If [UsingDefaultBucket, !Sub '${QSS3BucketName}-${AWS::Region}', !Ref QSS3BucketName]
+          - https://${S3Bucket}.s3.${S3Region}.${AWS::URLSuffix}/${QSS3KeyPrefix}templates/rootmail.yaml
+          - S3Region:
+              Fn::If:
+                - UsingDefaultBucket
+                - Fn::Sub: ${AWS::Region}
+                - Ref: QSS3BucketRegion
+            S3Bucket:
+              Fn::If:
+                - UsingDefaultBucket
+                - Fn::Sub: ${QSS3BucketName}-${AWS::Region}
+                - Ref: QSS3BucketName
       Parameters:
-        Domain: !Ref Domain
-        Subdomain: !Ref Subdomain
-
+        Domain:
+          Ref: Domain
+        Subdomain:
+          Ref: Subdomain
   SecurityHub:
     Condition: IncludeSecurityHub
     Type: AWS::CloudFormation::Stack
     Properties:
       TemplateURL:
         Fn::Sub:
-          - 'https://${S3Bucket}.s3.${S3Region}.${AWS::URLSuffix}/${QSS3KeyPrefix}templates/security-hub.yaml'
-          - S3Region: !If [UsingDefaultBucket, !Sub '${AWS::Region}', !Ref QSS3BucketRegion]
-            S3Bucket: !If [UsingDefaultBucket, !Sub '${QSS3BucketName}-${AWS::Region}', !Ref QSS3BucketName]
-
+          - https://${S3Bucket}.s3.${S3Region}.${AWS::URLSuffix}/${QSS3KeyPrefix}templates/security-hub.yaml
+          - S3Region:
+              Fn::If:
+                - UsingDefaultBucket
+                - Fn::Sub: ${AWS::Region}
+                - Ref: QSS3BucketRegion
+            S3Bucket:
+              Fn::If:
+                - UsingDefaultBucket
+                - Fn::Sub: ${QSS3BucketName}-${AWS::Region}
+                - Ref: QSS3BucketName
   Backup:
     Condition: IncludeBackup
     Type: AWS::CloudFormation::Stack
@@ -289,10 +314,17 @@ Resources:
     Properties:
       TemplateURL:
         Fn::Sub:
-          - 'https://${S3Bucket}.s3.${S3Region}.${AWS::URLSuffix}/${QSS3KeyPrefix}templates/backup.yaml'
-          - S3Region: !If [UsingDefaultBucket, !Sub '${AWS::Region}', !Ref QSS3BucketRegion]
-            S3Bucket: !If [UsingDefaultBucket, !Sub '${QSS3BucketName}-${AWS::Region}', !Ref QSS3BucketName]
-
+          - https://${S3Bucket}.s3.${S3Region}.${AWS::URLSuffix}/${QSS3KeyPrefix}templates/backup.yaml
+          - S3Region:
+              Fn::If:
+                - UsingDefaultBucket
+                - Fn::Sub: ${AWS::Region}
+                - Ref: QSS3BucketRegion
+            S3Bucket:
+              Fn::If:
+                - UsingDefaultBucket
+                - Fn::Sub: ${QSS3BucketName}-${AWS::Region}
+                - Ref: QSS3BucketName
   ServiceControlPolicies:
     Condition: IncludeServiceControlPolicies
     Type: AWS::CloudFormation::Stack
@@ -300,19 +332,28 @@ Resources:
     Properties:
       TemplateURL:
         Fn::Sub:
-          - 'https://${S3Bucket}.s3.${S3Region}.${AWS::URLSuffix}/${QSS3KeyPrefix}templates/service-control-policies.yaml'
-          - S3Region: !If [UsingDefaultBucket, !Sub '${AWS::Region}', !Ref QSS3BucketRegion]
-            S3Bucket: !If [UsingDefaultBucket, !Sub '${QSS3BucketName}-${AWS::Region}', !Ref QSS3BucketName]
+          - https://${S3Bucket}.s3.${S3Region}.${AWS::URLSuffix}/${QSS3KeyPrefix}templates/service-control-policies.yaml
+          - S3Region:
+              Fn::If:
+                - UsingDefaultBucket
+                - Fn::Sub: ${AWS::Region}
+                - Ref: QSS3BucketRegion
+            S3Bucket:
+              Fn::If:
+                - UsingDefaultBucket
+                - Fn::Sub: ${QSS3BucketName}-${AWS::Region}
+                - Ref: QSS3BucketName
       Parameters:
-        IncludeSecurityHub: !If
-          - IncludeSecurityHub
-          - true
-          - false
-        IncludeBackup: !If
-          - IncludeBackup
-          - true
-          - false
-
+        IncludeSecurityHub:
+          Fn::If:
+            - IncludeSecurityHub
+            - true
+            - false
+        IncludeBackup:
+          Fn::If:
+            - IncludeBackup
+            - true
+            - false
   Notifications:
     Condition: IncludeNotifications
     Type: AWS::CloudFormation::Stack
@@ -320,16 +361,27 @@ Resources:
     Properties:
       TemplateURL:
         Fn::Sub:
-          - 'https://${S3Bucket}.s3.${S3Region}.${AWS::URLSuffix}/${QSS3KeyPrefix}templates/notifications.yaml'
-          - S3Region: !If [UsingDefaultBucket, !Sub '${AWS::Region}', !Ref QSS3BucketRegion]
-            S3Bucket: !If [UsingDefaultBucket, !Sub '${QSS3BucketName}-${AWS::Region}', !Ref QSS3BucketName]
+          - https://${S3Bucket}.s3.${S3Region}.${AWS::URLSuffix}/${QSS3KeyPrefix}templates/notifications.yaml
+          - S3Region:
+              Fn::If:
+                - UsingDefaultBucket
+                - Fn::Sub: ${AWS::Region}
+                - Ref: QSS3BucketRegion
+            S3Bucket:
+              Fn::If:
+                - UsingDefaultBucket
+                - Fn::Sub: ${QSS3BucketName}-${AWS::Region}
+                - Ref: QSS3BucketName
       Parameters:
-        NotificationsMail: !Ref NotificationsMail
-
+        NotificationsMail:
+          Ref: NotificationsMail
 Outputs:
   RootMailDelegationTarget:
     Description: Name servers for the hosted zone delegation
-    Value: !GetAtt RootMail.Outputs.DelegationTarget
+    Value:
+      Fn::GetAtt:
+        - RootMail
+        - Outputs.DelegationTarget
   CloudWatchDashboard:
     Description: See the CloudWatch superwerker dashboard for post-deployment steps
     Value: https://console.aws.amazon.com/cloudwatch/home#dashboards:name=superwerker
