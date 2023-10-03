@@ -1,0 +1,159 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: AWS::Serverless-2016-10-31
+Description: Sets up AWS ControlTower. (qs-1s3rsr7lh)
+Parameters:
+  AuditAWSAccountEmail:
+    Type: String
+  LogArchiveAWSAccountEmail:
+    Type: String
+Resources:
+  SetupControlTower:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken:
+        Fn::GetAtt:
+          - SetupControlTowerCustomResource
+          - Arn
+  SetupControlTowerCustomResource:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: index.handler
+      Runtime: python3.7
+      MemorySize: 2048
+      Timeout: 900
+      Role:
+        Fn::GetAtt:
+          - SetupControlTowerCustomResourceRole
+          - Arn
+      Policies:
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action: sts:AssumeRole
+              Resource:
+                Fn::GetAtt:
+                  - AwsApiLibRole
+                  - Arn
+      Environment:
+        Variables:
+          AWSAPILIB_CONTROL_TOWER_ROLE_ARN:
+            Fn::GetAtt:
+              - AwsApiLibRole
+              - Arn
+          LOG_ARCHIVE_AWS_ACCOUNT_EMAIL:
+            Ref: LogArchiveAWSAccountEmail
+          AUDIT_AWS_ACCOUNT_EMAIL:
+            Ref: AuditAWSAccountEmail
+      InlineCode: "import boto3\nimport os\nimport cfnresponse\nimport sys\nimport subprocess\n\n# load awsapilib in-process as long as we have no strategy for bundling assets\nsys.path.insert(1, '/tmp/packages')\n\
+        subprocess.check_call([sys.executable, \"-m\", \"pip\", \"install\", '--target', '/tmp/packages', 'https://github.com/superwerker/awsapilib/archive/198a3269e324455dc3cc499b61bf61e5ec095779.zip'])\n\
+        \n# workaround for install awsapilib via zip (remove me once back to official awsapilib version)\nwith open('/tmp/packages/awsapilib/.VERSION', 'w') as version_file:\n    version_file.write(\"2.3.1-ctapifix\\\
+        n\")\n\nimport awsapilib\nfrom awsapilib import ControlTower\n\nCREATE = 'Create'\nDELETE = 'Delete'\nUPDATE = 'Update'\n\ndef exception_handling(function):\n    def catch(event, context):\n   \
+        \     try:\n            function(event, context)\n        except Exception as e:\n            print(e)\n            print(event)\n            cfnresponse.send(event, context, cfnresponse.FAILED,\
+        \ {})\n\n    return catch\n\n@exception_handling\ndef handler(event, context):\n    RequestType = event[\"RequestType\"]\n    Properties = event[\"ResourceProperties\"]\n    LogicalResourceId =\
+        \ event[\"LogicalResourceId\"]\n    PhysicalResourceId = event.get(\"PhysicalResourceId\")\n\n    print('RequestType: {}'.format(RequestType))\n    print('PhysicalResourceId: {}'.format(PhysicalResourceId))\n\
+        \    print('LogicalResourceId: {}'.format(LogicalResourceId))\n\n    id = PhysicalResourceId\n\n    data = {}\n\n    tower = ControlTower(os.environ['AWSAPILIB_CONTROL_TOWER_ROLE_ARN'])\n\n    if\
+        \ RequestType == CREATE:\n        tower.deploy(logging_account_email=os.environ['LOG_ARCHIVE_AWS_ACCOUNT_EMAIL'], security_account_email=os.environ['AUDIT_AWS_ACCOUNT_EMAIL'], retries=50, wait=5)\n\
+        \n    cfnresponse.send(event, context, cfnresponse.SUCCESS, data, id)\n"
+  SetupControlTowerCustomResourceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - Fn::Sub: arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+  SetupControlTowerCustomResourceRolePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Action: sts:AssumeRole
+            Resource:
+              Fn::GetAtt:
+                - AwsApiLibRole
+                - Arn
+        Version: 2012-10-17
+      PolicyName:
+        Fn::Sub: ${SetupControlTowerCustomResourceRole}Policy
+      Roles:
+        - Ref: SetupControlTowerCustomResourceRole
+  AwsApiLibRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS:
+                Fn::GetAtt:
+                  - SetupControlTowerCustomResourceRole
+                  - Arn
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - Fn::Sub: arn:${AWS::Partition}:iam::aws:policy/AdministratorAccess
+  ControlTowerReadyHandle:
+    Type: AWS::CloudFormation::WaitConditionHandle
+  ControlTowerReadyHandleWaitCondition:
+    Type: AWS::CloudFormation::WaitCondition
+    Properties:
+      Handle:
+        Ref: ControlTowerReadyHandle
+      Timeout: '7200'
+  SuperwerkerBootstrapFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Events:
+        SetupLandingZone:
+          Type: CloudWatchEvent
+          Properties:
+            InputPath: $.detail.serviceEventDetails.setupLandingZoneStatus
+            Pattern:
+              detail-type:
+                - AWS Service Event via CloudTrail
+              source:
+                - aws.controltower
+              detail:
+                serviceEventDetails:
+                  setupLandingZoneStatus:
+                    state:
+                      - SUCCEEDED
+                eventName:
+                  - SetupLandingZone
+      Handler: index.handler
+      Runtime: python3.7
+      Environment:
+        Variables:
+          SIGNAL_URL:
+            Ref: ControlTowerReadyHandle
+      InlineCode: "import boto3\nimport json\n\nssm = boto3.client('ssm')\nevents = boto3.client('events')\nimport urllib3\nimport os\n\ndef handler(event, context):\n  for account in event['accounts']:\n\
+        \      ssm.put_parameter(\n          Name='/superwerker/account_id_{}'.format(account['accountName'].lower().replace(' ', '')),\n          Value=account['accountId'],\n          Overwrite=True,\n\
+        \          Type='String',\n      )\n\n  # signal cloudformation stack that control tower setup is complete\n  encoded_body = json.dumps({\n      \"Status\": \"SUCCESS\",\n      \"Reason\": \"Control\
+        \ Tower Setup completed\",\n      \"UniqueId\": \"doesthisreallyhavetobeunique\",\n      \"Data\": \"Control Tower Setup completed\"\n  })\n  http = urllib3.PoolManager()\n  http.request('PUT',\
+        \ os.environ['SIGNAL_URL'], body=encoded_body)\n\n  # signal Control Tower Landing ZOne Setup/Update has finished\n  events.put_events(\n      Entries=[\n          {\n              'DetailType':\
+        \ 'superwerker-event',\n              'Detail': json.dumps(\n                  {\n                      'eventName': 'LandingZoneSetupOrUpdateFinished',\n                  }\n              ),\n\
+        \              'Source': 'superwerker'\n          }\n      ]\n  )"
+      Policies:
+        - Version: 2012-10-17
+          Statement:
+            - Action:
+                - ssm:PutParameter
+              Effect: Allow
+              Resource:
+                - Fn::Sub: arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/superwerker*
+            - Action: events:PutEvents
+              Effect: Allow
+              Resource:
+                Fn::Sub: arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:event-bus/default
+Metadata:
+  SuperwerkerVersion: 0.13.2
+  cfn-lint:
+    config:
+      ignore_checks:
+        - E9007
+Outputs: {}

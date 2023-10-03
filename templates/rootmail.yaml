@@ -1,0 +1,398 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: AWS::Serverless-2016-10-31
+Description: Sets up root mail. (qs-1s3rsr7mr)
+Parameters:
+  Domain:
+    Type: String
+  Subdomain:
+    Type: String
+Outputs:
+  DelegationTarget:
+    Description: Nameservers for the hosted zone delegation
+    Value:
+      Fn::Join:
+        - ','
+        - Fn::GetAtt:
+            - HostedZone
+            - NameServers
+  EmailGeneratorFunction:
+    Description: Lambda function to verify email delegation and generate new email aliases
+    Value:
+      Ref: EmailGeneratorFunction
+Resources:
+  EmailBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+  EmailBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: EmailBucket
+      PolicyDocument:
+        Fn::Sub: "{\n  \"Version\": \"2012-10-17\",\n  \"Statement\": [\n    {\n      \"Action\": \"s3:PutObject\",\n      \"Condition\": {\n        \"StringEquals\": {\n          \"aws:Referer\": \"${AWS::AccountId}\"\
+          \n        }\n      },\n      \"Effect\": \"Allow\",\n      \"Principal\": {\n        \"Service\": \"ses.amazonaws.com\"\n      },\n      \"Resource\": [\n        \"arn:${AWS::Partition}:s3:::${EmailBucket}/RootMail/*\"\
+          \n      ],\n      \"Sid\": \"EnableSESReceive\"\n    }\n  ]\n}\n"
+  EmailGeneratorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: index.handler
+      InlineCode:
+        Fn::Sub: "import json\nimport uuid\n\ndomain = \"${Subdomain}.${Domain}\"\n\ndef handler(event, context):\n\n  max = 64 - len(domain) - 1 - 5\n\n  alias = str(uuid.uuid4())\n  alias = alias[:max]\n\
+          \n  if len(alias) < 36:\n\n    log({\n      'domain': domain,\n      'msg': 'UUID local part was reduced in length because your domain is too long for Control Tower (64 characters in total) -\
+          \ this increases the chance of collisions',\n      'level': 'warn',\n      'length': len(alias),\n      'max': 36,\n    })\n\n  email = 'root+{alias}@{domain}'.format(alias = alias, domain = domain)\n\
+          \n  return {\n    'email': email,\n  }\n\ndef log(msg):\n  print(json.dumps(msg), flush=True)\n"
+      Runtime: python3.7
+      Timeout: 260
+  HostedZone:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name:
+        Fn::Sub: ${Subdomain}.${Domain}
+      HostedZoneConfig:
+        Comment: Created by superwerker
+  HostedZoneSSMParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /superwerker/domain_name_servers
+      Value:
+        Fn::Join:
+          - ','
+          - Fn::GetAtt:
+              - HostedZone
+              - NameServers
+      Type: StringList
+  HostedZoneDKIMAndVerificationRecords:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken:
+        Fn::GetAtt:
+          - HostedZoneDKIMAndVerificationRecordsCustomResource
+          - Arn
+      Domain:
+        Fn::Sub: ${Subdomain}.${Domain}
+  HostedZoneDKIMAndVerificationRecordsCustomResource:
+    Type: AWS::Serverless::Function
+    Properties:
+      Timeout: 200
+      Handler: index.handler
+      Runtime: python3.7
+      Policies:
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action:
+                - ses:VerifyDomainDkim
+                - ses:VerifyDomainIdentity
+              Resource: '*'
+      InlineCode: "import boto3\nimport cfnresponse\n\nses = boto3.client(\"ses\", region_name=\"eu-west-1\") # this is fixed to eu-west-1 until SES supports receive more globally (see #23)\n\nCREATE =\
+        \ 'Create'\nDELETE = 'Delete'\n UPDATE = 'Update'\n\ndef exception_handling(function):\n    def catch(event, context):\n        try:\n            function(event, context)\n        except Exception\
+        \ as e:\n            print(e)\n            print(event)\n            cfnresponse.send(event, context, cfnresponse.FAILED, {})\n\n    return catch\n\n@exception_handling\ndef handler(event, context):\n\
+        \    RequestType = event[\"RequestType\"]\n    Properties = event[\"ResourceProperties\"]\n    LogicalResourceId = event[\"LogicalResourceId\"]\n    PhysicalResourceId = event.get(\"PhysicalResourceId\"\
+        )\n    Domain = Properties[\"Domain\"]\n\n    print('RequestType: {}'.format(RequestType))\n    print('PhysicalResourceId: {}'.format(PhysicalResourceId))\n    print('LogicalResourceId: {}'.format(LogicalResourceId))\n\
+        \n    id = PhysicalResourceId\n\n    data = {}\n\n    if RequestType == CREATE:\n\n        print('Creating Domain verification and DKIM records: {}'.format(LogicalResourceId))\n\n        response\
+        \ = ses.verify_domain_identity(\n          Domain=Domain,\n        )\n\n        data[\"VerificationToken\"] = response[\"VerificationToken\"]\n\n        response = ses.verify_domain_dkim(\n    \
+        \      Domain=Domain,\n        )\n\n        data[\"DkimTokens\"] = response[\"DkimTokens\"]\n\n    cfnresponse.send(event, context, cfnresponse.SUCCESS, data, id)\n"
+  HostedZoneDKIMTokenRecord0:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId:
+        Ref: HostedZone
+      Name:
+        Fn::Sub:
+          - ${Token}._domainkey.${Subdomain}.${Domain}
+          - Token:
+              Fn::Select:
+                - 0
+                - Fn::GetAtt:
+                    - HostedZoneDKIMAndVerificationRecords
+                    - DkimTokens
+      ResourceRecords:
+        - Fn::Sub:
+            - ${Token}.dkim.amazonses.com
+            - Token:
+                Fn::Select:
+                  - 0
+                  - Fn::GetAtt:
+                      - HostedZoneDKIMAndVerificationRecords
+                      - DkimTokens
+      TTL: 60
+      Type: CNAME
+  HostedZoneDKIMTokenRecord1:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId:
+        Ref: HostedZone
+      Name:
+        Fn::Sub:
+          - ${Token}._domainkey.${Subdomain}.${Domain}
+          - Token:
+              Fn::Select:
+                - 1
+                - Fn::GetAtt:
+                    - HostedZoneDKIMAndVerificationRecords
+                    - DkimTokens
+      ResourceRecords:
+        - Fn::Sub:
+            - ${Token}.dkim.amazonses.com
+            - Token:
+                Fn::Select:
+                  - 1
+                  - Fn::GetAtt:
+                      - HostedZoneDKIMAndVerificationRecords
+                      - DkimTokens
+      TTL: 60
+      Type: CNAME
+  HostedZoneDKIMTokenRecord2:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId:
+        Ref: HostedZone
+      Name:
+        Fn::Sub:
+          - ${Token}._domainkey.${Subdomain}.${Domain}
+          - Token:
+              Fn::Select:
+                - 2
+                - Fn::GetAtt:
+                    - HostedZoneDKIMAndVerificationRecords
+                    - DkimTokens
+      ResourceRecords:
+        - Fn::Sub:
+            - ${Token}.dkim.amazonses.com
+            - Token:
+                Fn::Select:
+                  - 2
+                  - Fn::GetAtt:
+                      - HostedZoneDKIMAndVerificationRecords
+                      - DkimTokens
+      TTL: 60
+      Type: CNAME
+  HostedZoneMXRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId:
+        Ref: HostedZone
+      Name:
+        Fn::Sub: ${Subdomain}.${Domain}.
+      ResourceRecords:
+        - 10 inbound-smtp.eu-west-1.amazonaws.com
+      TTL: 60
+      Type: MX
+  HostedZoneVerificationTokenRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId:
+        Ref: HostedZone
+      Name:
+        Fn::Sub: _amazonses.${Subdomain}.${Domain}.
+      ResourceRecords:
+        - Fn::Sub: '"${HostedZoneDKIMAndVerificationRecords.VerificationToken}"'
+      TTL: 60
+      Type: TXT
+  RootMailReady:
+    Type: AWS::Serverless::Function
+    Properties:
+      Events:
+        Schedule:
+          Type: Schedule
+          Properties:
+            Schedule: rate(5 minutes)
+      Handler: index.handler
+      InlineCode:
+        Fn::Sub: "import boto3\nimport itertools\nimport json\nimport time\n\ndomain = \"${Subdomain}.${Domain}\"\nses = boto3.client(\"ses\", region_name=\"eu-west-1\") # this is fixed to eu-west-1 until\
+          \ SES supports receive more globally (see #23)\n\ndef backoff(msg, res, n):\n\n  wait = pow(2, n)\n\n  log({\n    'level': 'info',\n    'msg': msg,\n    'res': res,\n    'round': n,\n    'waiting_in_seconds':\
+          \ wait,\n  })\n\n  time.sleep(n)\n\ndef handler(event, context):\n\n  log({\n    'event': event,\n    'level': 'debug',\n  })\n\n  for n in itertools.count(start=1):\n\n    res = ses.get_account_sending_enabled()\n\
+          \n    if res.get('Enabled'):\n      break\n    else:\n      backoff('sending not yet enabled', res, n)\n\n  for n in itertools.count(start=1):\n\n    res = ses.get_identity_verification_attributes(\n\
+          \      Identities=[\n        domain,\n      ],\n    )\n\n    if res.get('VerificationAttributes', {}).get(domain, {}).get('VerificationStatus') == 'Success':\n      break\n    else:\n      backoff('verification\
+          \ not yet successful', res, n)\n\n  for n in itertools.count(start=1):\n\n    res = ses.get_identity_dkim_attributes(\n      Identities=[\n        domain,\n      ],\n    )\n\n    if res.get('DkimAttributes',\
+          \ {}).get(domain, {}).get('DkimVerificationStatus') == 'Success':\n      break\n    else:\n      backoff('DKIM verification not yet successful', res, n)\n\n  for n in itertools.count(start=1):\n\
+          \n    res = ses.get_identity_notification_attributes(\n      Identities=[\n        domain,\n      ],\n    )\n\n    if res.get('NotificationAttributes', {}).get(domain, {}).get('ForwardingEnabled')\
+          \ == True:\n      break\n    else:\n      backoff('forwarding not yet enabled', res, n)\n\ndef log(msg):\n  print(json.dumps(msg), flush=True)\n"
+      Runtime: python3.7
+      Policies:
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action:
+                - ses:GetIdentityVerificationAttributes
+                - ses:GetAccountSendingEnabled
+                - ses:GetIdentityDkimAttributes
+                - ses:GetIdentityNotificationAttributes
+              Resource: '*'
+      Timeout: 260
+  RootMailReadyAlert:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: superwerker-RootMailReady
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value:
+            Ref: RootMailReady
+      EvaluationPeriods: 1
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Period: 180
+      Statistic: Sum
+      Threshold: 1
+  RootMailReadyHandle:
+    Type: AWS::CloudFormation::WaitConditionHandle
+  RootMailReadyHandleWaitCondition:
+    Type: AWS::CloudFormation::WaitCondition
+    Properties:
+      Handle:
+        Ref: RootMailReadyHandle
+      Timeout: '28800'
+  RootMailReadyTrigger:
+    Type: AWS::Serverless::Function
+    Properties:
+      Events:
+        EmailHealth:
+          Type: CloudWatchEvent
+          Properties:
+            Pattern:
+              detail-type:
+                - CloudWatch Alarm State Change
+              source:
+                - aws.cloudwatch
+              detail:
+                alarmName:
+                  - Ref: RootMailReadyAlert
+                state:
+                  value:
+                    - OK
+      Handler: index.handler
+      Environment:
+        Variables:
+          SIGNAL_URL:
+            Ref: RootMailReadyHandle
+      InlineCode: "import json\nimport os\nimport urllib3\nimport uuid\n\ndef handler(event, context):\n\n  encoded_body = json.dumps({\n      \"Status\": \"SUCCESS\",\n      \"Reason\": \"RootMail Setup\
+        \ completed\",\n      \"UniqueId\": str(uuid.uuid4()),\n      \"Data\": \"RootMail Setup completed\"\n  })\n\n  http = urllib3.PoolManager()\n  http.request('PUT', os.environ['SIGNAL_URL'], body=encoded_body)"
+      Runtime: python3.7
+      Timeout: 10
+  SESReceiveStack:
+    Type: AWS::CloudFormation::StackSet
+    Properties:
+      AdministrationRoleARN:
+        Fn::GetAtt:
+          - StackSetAdministrationRole
+          - Arn
+      ExecutionRoleName:
+        Ref: StackSetExecutionRole
+      PermissionModel: SELF_MANAGED
+      Capabilities:
+        - CAPABILITY_IAM
+      StackInstancesGroup:
+        - DeploymentTargets:
+            Accounts:
+              - Fn::Sub: ${AWS::AccountId}
+          Regions:
+            - eu-west-1
+      StackSetName:
+        Fn::Sub: ${AWS::StackName}-ReceiveStack
+      TemplateBody:
+        Fn::Sub: "Resources:\n  SESReceiptRuleSetActivation:\n    Type: AWS::CloudFormation::CustomResource\n    Properties:\n      ServiceToken: !GetAtt SESReceiptRuleSetActivationCustomResource.Arn\n\n\
+          \  SESReceiptRuleSetActivationCustomResourceRole:\n    Type: AWS::IAM::Role\n    Properties:\n      AssumeRolePolicyDocument:\n        Version: 2012-10-17\n        Statement:\n          - Effect:\
+          \ Allow\n            Principal:\n              Service: lambda.amazonaws.com\n            Action: sts:AssumeRole\n      ManagedPolicyArns:\n        - arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole\n\
+          \      Policies:\n        - PolicyName: AllowSesAccess\n          PolicyDocument:\n            Version: '2012-10-17'\n            Statement:\n              - Effect: Allow\n                Action:\
+          \ # TODO: least privilege\n                  - ses:*\n                Resource: \"*\"\n\n  SESReceiptRuleSetActivationCustomResource:\n    Type: AWS::Lambda::Function\n    Properties:\n      Timeout:\
+          \ 200\n      Handler: index.handler\n      Runtime: python3.7\n      Role: !GetAtt SESReceiptRuleSetActivationCustomResourceRole.Arn\n      Code:\n        ZipFile: !Sub | # TODO: adopt function\
+          \ to new ADR for inline python lambdas\n          import boto3\n          import cfnresponse\n\n          ses = boto3.client(\"ses\")\n\n          CREATE = 'Create'\n          DELETE = 'Delete'\n\
+          \          UPDATE = 'Update'\n\n          def exception_handling(function):\n              def catch(event, context):\n                  try:\n                      function(event, context)\n\
+          \                  except Exception as e:\n                      print(e)\n                      print(event)\n                      cfnresponse.send(event, context, cfnresponse.FAILED, {})\n\n\
+          \              return catch\n\n          @exception_handling\n          def handler(event, context):\n              RequestType = event[\"RequestType\"]\n              Properties = event[\"ResourceProperties\"\
+          ]\n              LogicalResourceId = event[\"LogicalResourceId\"]\n              PhysicalResourceId = event.get(\"PhysicalResourceId\")\n\n              print('RequestType: {}'.format(RequestType))\n\
+          \              print('PhysicalResourceId: {}'.format(PhysicalResourceId))\n              print('LogicalResourceId: {}'.format(LogicalResourceId))\n\n              id = PhysicalResourceId\n   \
+          \           rule_set_name = 'RootMail'\n              rule_name = 'Receive'\n\n              if RequestType == CREATE or RequestType == UPDATE:\n                  ses.create_receipt_rule_set(\n\
+          \                    RuleSetName=rule_set_name\n                  )\n\n                  ses.create_receipt_rule(\n                    RuleSetName=rule_set_name,\n                    Rule    \
+          \      = {\n                      'Name'      : rule_name,\n                      'Enabled'   : True,\n                      'TlsPolicy' : 'Require',\n                      'ScanEnabled': True,\n\
+          \                      'Recipients': [\n                        'root@${Subdomain}.${Domain}',\n                      ],\n                      'Actions': [\n                        {\n      \
+          \                    'S3Action'         : {\n                            'BucketName'     : '${EmailBucket}',\n                            'ObjectKeyPrefix': 'RootMail'\n                     \
+          \     },\n                        },\n                        {\n                          'LambdaAction': {\n                            'FunctionArn': '${!OpsSantaFunction.Arn}'\n          \
+          \                }\n                        }\n                      ],\n                    }\n                  )\n\n                  print('Activating SES ReceiptRuleSet: {}'.format(LogicalResourceId))\n\
+          \n                  ses.set_active_receipt_rule_set(\n                    RuleSetName=rule_set_name,\n                  )\n              elif RequestType == DELETE:\n                  print('Deactivating\
+          \ SES ReceiptRuleSet: {}'.format(LogicalResourceId))\n\n                  ses.set_active_receipt_rule_set()\n\n                  ses.delete_receipt_rule(\n                    RuleName=rule_name,\n\
+          \                    RuleSetName=rule_set_name,\n                  )\n\n                  ses.delete_receipt_rule_set(\n                    RuleSetName=rule_set_name\n                  )\n\n\n\
+          \              cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, id)\n\n  OpsSantaFunctionSESPermissions:\n    Type: AWS::Lambda::Permission\n    Properties:\n      Action: lambda:InvokeFunction\n\
+          \      FunctionName: !Ref OpsSantaFunction\n      Principal: ses.amazonaws.com\n      SourceAccount: \"${AWS::AccountId}\"\n\n  OpsSantaFunctionRole:\n    Type: AWS::IAM::Role\n    Properties:\n\
+          \      AssumeRolePolicyDocument:\n        Version: 2012-10-17\n        Statement:\n          - Effect: Allow\n            Principal:\n              Service: lambda.amazonaws.com\n            Action:\
+          \ sts:AssumeRole\n      ManagedPolicyArns:\n        - arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole\n      Policies:\n        - PolicyName: OpsSantaFunctionRolePolicy\n\
+          \          PolicyDocument:\n            Version: '2012-10-17'\n            Statement:\n            - Effect: Allow\n              Action:\n                - s3:GetObject\n              Resource:\
+          \ ${EmailBucket.Arn}/RootMail/*\n            - Effect: Allow\n              Action:\n                - ssm:CreateOpsItem\n              Resource: \"*\"\n            - Action: ssm:PutParameter\n\
+          \              Effect: Allow\n              Resource: arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/superwerker/*\n\n  OpsSantaFunction:\n    Type: AWS::Lambda::Function\n\
+          \    Properties:\n      Timeout: 60\n      Handler: index.handler\n      Runtime: python3.7\n      Role: !GetAtt OpsSantaFunctionRole.Arn\n      Code:\n        ZipFile: !Sub |\n          import\
+          \ boto3\n          import email\n          from email import policy\n          import hashlib\n          import json\n          import re\n          import datetime\n\n          s3 = boto3.client('s3')\n\
+          \          ssm = boto3.client('ssm', region_name='${AWS::Region}')\n\n          filtered_email_subjects = [\n            'Your AWS Account is Ready - Get Started Now',\n            'Welcome to\
+          \ Amazon Web Services',\n          ]\n\n          def handler(event, context):\n\n              log({\n                'event': event,\n                'level': 'debug',\n              })\n\n\
+          \              for record in event['Records']:\n\n                id = record['ses']['mail']['messageId']\n                key = 'RootMail/{key}'.format(key=id)\n                receipt = record['ses']['receipt']\n\
+          \n                log({\n                  'id': id,\n                  'level': 'debug',\n                  'key': key,\n                  'msg': 'processing mail',\n                })\n\n  \
+          \              verdicts = {\n                  'dkim': receipt['dkimVerdict']['status'],\n                  'spam': receipt['spamVerdict']['status'],\n                  'spf': receipt['spfVerdict']['status'],\n\
+          \                  'virus': receipt['virusVerdict']['status'],\n                }\n\n                for k, v in verdicts.items():\n\n                  if not v == 'PASS':\n\n                \
+          \    log({\n                      'class': k,\n                      'id': id,\n                      'key': key,\n                      'level': 'warn',\n                      'msg': 'verdict\
+          \ failed - ops santa item skipped',\n                    })\n\n                    return\n\n                response = s3.get_object(\n                  Bucket=\"${EmailBucket}\",\n         \
+          \         Key=key,\n                )\n\n                msg = email.message_from_bytes(response[\"Body\"].read(), policy=policy.default)\n\n                title=msg[\"subject\"]\n\n        \
+          \        source=recipient=event[\"Records\"][0][\"ses\"][\"mail\"][\"destination\"][0]\n\n                if title == 'Amazon Web Services Password Assistance':\n                  description=msg.get_body('html').get_content()\n\
+          \                  pw_reset_link = re.search(r'(https://signin.aws.amazon.com/resetpassword(.*?))(?=<br>)', description).group()\n                  rootmail_identifier = '/superwerker/rootmail/pw_reset_link/{}'.format(source.split('@')[0].split('root+')[1])\n\
+          \                  ssm.put_parameter(\n                      Name=rootmail_identifier,\n                      Value=pw_reset_link,\n                      Overwrite=True,\n                    \
+          \  Type='String',\n                      Tier='Advanced',\n                      Policies=json.dumps([\n                        {\n                          \"Type\":\"Expiration\",\n        \
+          \                  \"Version\":\"1.0\",\n                          \"Attributes\":{\n                            \"Timestamp\": (datetime.datetime.now() + datetime.timedelta(minutes = 10)).strftime('%Y-%m-%dT%H:%M:%SZ')\
+          \ # expire in 10 minutes\n                          }\n                        }\n                      ])\n                  )\n                  return # no ops item for now\n\n            \
+          \    if title in filtered_email_subjects:\n                  log({\n                    'level': 'info',\n                    'msg': 'filtered email',\n                    'title': title,\n  \
+          \                })\n                  return\n\n                description=msg.get_body(preferencelist=('plain', 'html')).get_content()\n\n                title=title[:1020] + \" ...\" * (len(title)\
+          \ > 1020)\n\n                description=description[:1020] + \" ...\" * (len(description) > 1020)\n\n                source=source[:60] + ' ...' * (len(source) > 60)\n\n                operational_data={\n\
+          \                  \"/aws/dedup\":{\n                    \"Value\":json.dumps(\n                      {\n                        \"dedupString\":id,\n                      }\n                \
+          \    ),\n                    \"Type\":\"SearchableString\",\n                  },\n                  \"/aws/resources\":{\n                    \"Value\":json.dumps([\n                      {\n\
+          \                        \"arn\":\"${EmailBucket.Arn}/{key}\".format(key=key),\n                      }\n                    ]),\n                    \"Type\":\"SearchableString\",\n         \
+          \         },\n                }\n\n                ssm.create_ops_item(\n                  Description=description,\n                  OperationalData=operational_data,\n                  Source=source,\n\
+          \                  Title=title,\n                )\n\n          def log(msg):\n            print(json.dumps(msg), flush=True)\n"
+  StackSetExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS:
+                - Fn::Sub: ${AWS::AccountId}
+            Action:
+              - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - Fn::Sub: arn:${AWS::Partition}:iam::aws:policy/AdministratorAccess
+  StackSetAdministrationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: AssumeRole-AWSCloudFormationStackSetExecutionRole
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sts:AssumeRole
+                Resource:
+                  - Fn::GetAtt:
+                      - StackSetExecutionRole
+                      - Arn
+Metadata:
+  SuperwerkerVersion: 0.13.2
+  cfn-lint:
+    config:
+      ignore_checks:
+        - E9007
+        - EIAMPolicyWildcardResource

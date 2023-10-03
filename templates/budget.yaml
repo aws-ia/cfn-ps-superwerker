@@ -1,0 +1,112 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: AWS::Serverless-2016-10-31
+Description: Sets up Budget pieces for account management. (qs-1s3rsr7io)
+Metadata:
+  SuperwerkerVersion: 0.13.2
+  cfn-lint:
+    config:
+      ignore_checks:
+        - E9007
+Parameters:
+  BudgetLimitInUSD:
+    Default: 100
+    Description: Initial value. Will be overwritten by the scheduled lambda function.
+    Type: String
+Resources:
+  BudgetAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmActions:
+        - Fn::Sub: arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:opsitem:3#CATEGORY=Cost
+      AlarmDescription: Superwerker default budget forecast exceed previous three months
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: TopicName
+          Value:
+            Fn::GetAtt:
+              - BudgetNotification
+              - TopicName
+      EvaluationPeriods: 1
+      MetricName: NumberOfMessagesPublished
+      Namespace: AWS/SNS
+      Period: 300
+      Statistic: Sum
+      Threshold: 0
+      TreatMissingData: missing
+  BudgetLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      Environment:
+        Variables:
+          StackName:
+            Fn::Sub: ${AWS::StackName}
+      Events:
+        Schedule:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 0 L * ? *)
+      Handler: index.handler
+      InlineCode: "from dateutil.relativedelta import *\nimport boto3\nimport datetime\nimport json\nimport os\n\ndef handler(event, context):\n\n  ce = boto3.client('ce')\n\n  end = datetime.date.today().replace(day=1)\n\
+        \  start = end + relativedelta(months=-3)\n\n  start = start.strftime(\"%Y-%m-%d\")\n  end = end.strftime(\"%Y-%m-%d\")\n\n  response = ce.get_cost_and_usage(\n      Granularity='MONTHLY',\n   \
+        \   Metrics=[\n          'UnblendedCost',\n      ],\n      TimePeriod={\n          'Start': start,\n          'End': end,\n      },\n  )\n\n  avg = 0\n\n  for result in response['ResultsByTime']:\n\
+        \      total = result['Total']\n      cost = total['UnblendedCost']\n      amount = int(float(cost['Amount']))\n      avg = avg + amount\n\n  avg = int(avg/3)\n  budget = str(avg)\n\n  stack_name\
+        \ = os.environ['StackName']\n\n  log({\n      'average': avg,\n      'budget': budget,\n      'end': end,\n      'event': event,\n      'level': 'debug',\n      'stack': stack_name,\n      'start':\
+        \ start,\n  })\n\n  cf = boto3.client('cloudformation')\n\n  cf.update_stack(\n    Capabilities=[\n      'CAPABILITY_IAM',\n    ],\n    Parameters=[\n      {\n        'ParameterKey': 'BudgetLimitInUSD',\n\
+        \        'ParameterValue': budget,\n      }\n    ],\n    StackName=stack_name,\n    UsePreviousTemplate=True,\n  )\n\ndef log(msg):\n  print(json.dumps(msg), flush=True)\n"
+      Runtime: python3.7
+      Policies:
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action:
+                - ce:GetCostAndUsage
+              Resource: '*'
+            - Effect: Allow
+              Action:
+                - budgets:ModifyBudget
+              Resource:
+                Fn::Sub: arn:${AWS::Partition}:budgets::${AWS::AccountId}:budget/${BudgetReport}
+            - Effect: Allow
+              Action:
+                - cloudformation:UpdateStack
+              Resource:
+                Fn::Sub: ${AWS::StackId}
+      Timeout: 10
+  BudgetNotification:
+    Type: AWS::SNS::Topic
+  BudgetNotificationPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      PolicyDocument:
+        Statement:
+          Action: SNS:Publish
+          Effect: Allow
+          Principal:
+            Service: budgets.amazonaws.com
+          Resource:
+            Ref: BudgetNotification
+      Topics:
+        - Ref: BudgetNotification
+  BudgetReport:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetLimit:
+          Amount:
+            Ref: BudgetLimitInUSD
+          Unit: USD
+        BudgetType: COST
+        CostTypes:
+          IncludeCredit: false
+          IncludeRefund: false
+        TimeUnit: MONTHLY
+      NotificationsWithSubscribers:
+        - Notification:
+            ComparisonOperator: GREATER_THAN
+            NotificationType: FORECASTED
+            Threshold: 100
+          Subscribers:
+            - SubscriptionType: SNS
+              Address:
+                Ref: BudgetNotification
+Outputs: {}

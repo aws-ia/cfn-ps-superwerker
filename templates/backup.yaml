@@ -1,0 +1,502 @@
+AWSTemplateFormatVersion: 2010-09-09
+Metadata:
+  SuperwerkerVersion: 0.13.2
+  cfn-lint:
+    config:
+      ignore_checks:
+        - E9007
+        - EPolicyWildcardPrincipal
+        - E1029
+Transform: AWS::Serverless-2016-10-31
+Description: Sets up backups. (qs-1s3rsr7la)
+Resources:
+  OrganizationsLookup:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken:
+        Fn::GetAtt:
+          - OrganizationsLookupCustomResource
+          - Arn
+  OrganizationsLookupCustomResource:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: index.handler
+      Runtime: python3.7
+      Policies:
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action:
+                - organizations:ListRoots
+                - organizations:DescribeOrganization
+              Resource: '*'
+      InlineCode: "import boto3\nimport cfnresponse\n\norg = boto3.client(\"organizations\")\n\nCREATE = 'Create'\nDELETE = 'Delete'\nUPDATE = 'Update'\n\n\ndef exception_handling(function):\n    def catch(event,\
+        \ context):\n        try:\n            function(event, context)\n        except Exception as e:\n            print(e)\n            print(event)\n            cfnresponse.send(event, context, cfnresponse.FAILED,\
+        \ {})\n\n    return catch\n\n\n@exception_handling\ndef handler(event, context):\n    RequestType = event[\"RequestType\"]\n    LogicalResourceId = event[\"LogicalResourceId\"]\n    PhysicalResourceId\
+        \ = event.get(\"PhysicalResourceId\")\n\n    print('RequestType: {}'.format(RequestType))\n    print('PhysicalResourceId: {}'.format(PhysicalResourceId))\n    print('LogicalResourceId: {}'.format(LogicalResourceId))\n\
+        \n    id = PhysicalResourceId\n\n    data = {}\n\n    organization = org.describe_organization()['Organization']\n    data['OrgId'] = organization['Id']\n\n    roots = org.list_roots()['Roots']\n\
+        \    data['RootId'] = roots[0]['Id']\n\n    cfnresponse.send(event, context, cfnresponse.SUCCESS, data, id)\n"
+  OrganizationConformancePackBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName:
+        Fn::Sub: awsconfigconforms-${AWS::AccountId}
+  OrganizationConformancePackBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: OrganizationConformancePackBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowGetPutObject
+            Effect: Allow
+            Principal: '*'
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+            Resource:
+              Fn::Sub: ${OrganizationConformancePackBucket.Arn}/*
+            Condition:
+              StringEquals:
+                aws:PrincipalOrgID:
+                  Fn::GetAtt:
+                    - OrganizationsLookup
+                    - OrgId
+              ArnLike:
+                aws:PrincipalArn:
+                  Fn::Sub: arn:${AWS::Partition}:iam::*:role/aws-service-role/config-conforms.amazonaws.com/AWSServiceRoleForConfigConforms
+          - Sid: AllowGetBucketAcl
+            Effect: Allow
+            Principal: '*'
+            Action: s3:GetBucketAcl
+            Resource:
+              Fn::Sub: ${OrganizationConformancePackBucket.Arn}
+            Condition:
+              StringEquals:
+                aws:PrincipalOrgID:
+                  Fn::GetAtt:
+                    - OrganizationsLookup
+                    - OrgId
+              ArnLike:
+                aws:PrincipalArn:
+                  Fn::Sub: arn:${AWS::Partition}:iam::*:role/aws-service-role/config-conforms.amazonaws.com/AWSServiceRoleForConfigConforms
+  BackupResources:
+    Type: AWS::CloudFormation::StackSet
+    DependsOn: EnableCloudFormationStacksetsOrgAccessCustomResource
+    Properties:
+      StackSetName: superwerker-backup
+      PermissionModel: SERVICE_MANAGED
+      OperationPreferences:
+        MaxConcurrentPercentage: 50
+      Capabilities:
+        - CAPABILITY_IAM
+        - CAPABILITY_NAMED_IAM
+      AutoDeployment:
+        Enabled: true
+        RetainStacksOnAccountRemoval: false
+      StackInstancesGroup:
+        - Regions:
+            - Ref: AWS::Region
+          DeploymentTargets:
+            OrganizationalUnitIds:
+              - Fn::GetAtt:
+                  - OrganizationsLookup
+                  - RootId
+      TemplateBody:
+        Fn::Sub: "Resources:\n  AWSBackupDefaultServiceRole:\n    Type: AWS::IAM::Role\n    Properties:\n      RoleName: AWSBackupDefaultServiceRole\n      Path: /service-role/\n      AssumeRolePolicyDocument:\n\
+          \        Version: 2012-10-17\n        Statement:\n          - Effect: Allow\n            Principal:\n              Service: backup.amazonaws.com\n            Action: sts:AssumeRole\n      ManagedPolicyArns:\n\
+          \        - arn:${AWS::Partition}:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup\n        - arn:${AWS::Partition}:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForRestores\n\
+          \n  ConfigRemediationRole:\n    Type: AWS::IAM::Role\n    Properties:\n      RoleName: SuperwerkerBackupTagsEnforcementRemediationRole\n      AssumeRolePolicyDocument:\n        Version: 2012-10-17\n\
+          \        Statement:\n          - Effect: Allow\n            Principal:\n              Service: ssm.amazonaws.com\n            Action: sts:AssumeRole\n      Policies:\n        - PolicyName: AllowTagging\n\
+          \          PolicyDocument:\n            Statement:\n              - Effect: Allow\n                Action:\n                  - dynamodb:TagResource\n                  - ec2:CreateTags\n     \
+          \             - rds:AddTagsToResource\n                  - rds:DescribeDBInstances\n                Resource: '*'\n"
+  BackupTagsEnforcement:
+    DependsOn: BackupResources
+    Type: AWS::Config::OrganizationConformancePack
+    Properties:
+      ExcludedAccounts:
+        - Ref: AWS::AccountId
+      DeliveryS3Bucket:
+        Ref: OrganizationConformancePackBucket
+      OrganizationConformancePackName: superwerker-backup-enforce
+      TemplateBody:
+        Fn::Sub: "Resources:\n  ConfigRuleDynamoDBTable:\n    Type: AWS::Config::ConfigRule\n    Properties:\n      ConfigRuleName: superwerker-backup-enforce-dynamodb-table\n      Scope:\n        ComplianceResourceTypes:\n\
+          \          - AWS::DynamoDB::Table\n      InputParameters:\n        tag1Key: superwerker:backup\n        tag1Value: daily,none\n      Source:\n        Owner: AWS\n        SourceIdentifier: REQUIRED_TAGS\n\
+          \n  ConfigRemediationDynamoDBTable:\n    DependsOn: ConfigRuleDynamoDBTable\n    Type: AWS::Config::RemediationConfiguration\n    Properties:\n      ConfigRuleName: superwerker-backup-enforce-dynamodb-table\n\
+          \      Automatic: true\n      MaximumAutomaticAttempts: 10\n      RetryAttemptSeconds: 60\n      TargetId: arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:document/${BackupTagRemediation}\n\
+          \      TargetType: SSM_DOCUMENT\n      Parameters:\n        ResourceValue:\n          ResourceValue:\n            Value: \"RESOURCE_ID\"\n        AutomationAssumeRole:\n          StaticValue:\n\
+          \            Values:\n              - arn:${AWS::Partition}:iam::${AWS::AccountId}:role/SuperwerkerBackupTagsEnforcementRemediationRole # ${AWS::AccountId} is magically replaced with the actual\
+          \ sub-account id (magic by Conformance Pack)\n        ResourceType:\n          StaticValue:\n            Values:\n              - AWS::DynamoDB::Table\n\n  ConfigRuleEbsVolume:\n    Type: AWS::Config::ConfigRule\n\
+          \    Properties:\n      ConfigRuleName: superwerker-backup-enforce-ebs-volume\n      Scope:\n        ComplianceResourceTypes:\n          - AWS::EC2::Volume\n      InputParameters:\n        tag1Key:\
+          \ superwerker:backup\n        tag1Value: daily,none\n      Source:\n        Owner: AWS\n        SourceIdentifier: REQUIRED_TAGS\n\n  ConfigRemediationEbsVolume:\n    DependsOn: ConfigRuleEbsVolume\n\
+          \    Type: AWS::Config::RemediationConfiguration\n    Properties:\n      ConfigRuleName: superwerker-backup-enforce-ebs-volume\n      Automatic: true\n      MaximumAutomaticAttempts: 10\n    \
+          \  RetryAttemptSeconds: 60\n      TargetId: arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:document/${BackupTagRemediation}\n      TargetType: SSM_DOCUMENT\n      Parameters:\n   \
+          \     ResourceValue:\n          ResourceValue:\n            Value: \"RESOURCE_ID\"\n        AutomationAssumeRole:\n          StaticValue:\n            Values:\n              - arn:${AWS::Partition}:iam::${AWS::AccountId}:role/SuperwerkerBackupTagsEnforcementRemediationRole\
+          \ # ${AWS::AccountId} is magically replaced with the actual sub-account id (magic by Conformance Pack)\n        ResourceType:\n          StaticValue:\n            Values:\n              - AWS::EC2::Volume\n\
+          \n  ConfigRuleRdsDbInstance:\n    Type: AWS::Config::ConfigRule\n    Properties:\n      ConfigRuleName: superwerker-backup-enforce-rds-instance\n      Scope:\n        ComplianceResourceTypes:\n\
+          \          - AWS::RDS::DBInstance\n      InputParameters:\n        tag1Key: superwerker:backup\n        tag1Value: daily,none\n      Source:\n        Owner: AWS\n        SourceIdentifier: REQUIRED_TAGS\n\
+          \n  ConfigRemediationRdsDbInstance:\n    DependsOn: ConfigRuleRdsDbInstance\n    Type: AWS::Config::RemediationConfiguration\n    Properties:\n      ConfigRuleName: superwerker-backup-enforce-rds-instance\n\
+          \      Automatic: true\n      MaximumAutomaticAttempts: 10\n      RetryAttemptSeconds: 60\n      TargetId: arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:document/${BackupTagRemediation}\n\
+          \      TargetType: SSM_DOCUMENT\n      Parameters:\n        ResourceValue:\n          ResourceValue:\n            Value: \"RESOURCE_ID\"\n        AutomationAssumeRole:\n          StaticValue:\n\
+          \            Values:\n              - arn:${AWS::Partition}:iam::${AWS::AccountId}:role/SuperwerkerBackupTagsEnforcementRemediationRole # ${AWS::AccountId} is magically replaced with the actual\
+          \ sub-account id (magic by Conformance Pack)\n        ResourceType:\n          StaticValue:\n            Values:\n              - AWS::RDS::DBInstance\n"
+  BackupTagRemediation:
+    Type: AWS::SSM::Document
+    Properties:
+      DocumentType: Automation
+      Content:
+        schemaVersion: '0.3'
+        assumeRole: '{{ AutomationAssumeRole }}'
+        parameters:
+          ResourceValue:
+            type: String
+          AutomationAssumeRole:
+            type: String
+            default: ''
+          ResourceType:
+            type: String
+        mainSteps:
+          - name: synthArn
+            action: aws:branch
+            inputs:
+              Choices:
+                - NextStep: tagDynamoDbTable
+                  Variable: '{{ ResourceType }}'
+                  StringEquals: AWS::DynamoDB::Table
+                - NextStep: tagEbsVolume
+                  Variable: '{{ ResourceType }}'
+                  StringEquals: AWS::EC2::Volume
+                - NextStep: getRdsDBInstanceArnByDbInstanceResourceIdentifier
+                  Variable: '{{ ResourceType }}'
+                  StringEquals: AWS::RDS::DBInstance
+          - name: tagDynamoDbTable
+            action: aws:executeAwsApi
+            inputs:
+              Service: dynamodb
+              Api: TagResource
+              Tags:
+                - Key: superwerker:backup
+                  Value: daily
+              ResourceArn:
+                Fn::Sub: arn:${AWS::Partition}:dynamodb:{{ global:REGION }}:{{ global:ACCOUNT_ID }}:table/{{ ResourceValue }}
+            isEnd: true
+          - name: tagEbsVolume
+            action: aws:executeAwsApi
+            inputs:
+              Service: ec2
+              Api: CreateTags
+              Tags:
+                - Key: superwerker:backup
+                  Value: daily
+              Resources:
+                - '{{ ResourceValue }}'
+            isEnd: true
+          - name: getRdsDBInstanceArnByDbInstanceResourceIdentifier
+            action: aws:executeAwsApi
+            inputs:
+              Service: rds
+              Api: DescribeDBInstances
+              Filters:
+                - Name: dbi-resource-id
+                  Values:
+                    - '{{ ResourceValue }}'
+            outputs:
+              - Name: DBInstanceArn
+                Selector: $.DBInstances[0].DBInstanceArn
+          - name: tagRdsInstance
+            action: aws:executeAwsApi
+            inputs:
+              Service: rds
+              Api: AddTagsToResource
+              Tags:
+                - Key: superwerker:backup
+                  Value: daily
+              ResourceName: '{{ getRdsDBInstanceArnByDbInstanceResourceIdentifier.DBInstanceArn }}'
+            isEnd: true
+  BackupTagRemediationPublic:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken:
+        Fn::GetAtt:
+          - BackupTagRemediationPublicCustomResource
+          - Arn
+      DocumentName:
+        Ref: BackupTagRemediation
+  BackupTagRemediationPublicCustomResource:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: index.handler
+      Runtime: python3.7
+      Policies:
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action: ssm:ModifyDocumentPermission
+              Resource:
+                Fn::Sub: arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:document/*
+      InlineCode: "import boto3\nimport cfnresponse\nimport os\n\nssm = boto3.client(\"ssm\")\n\nCREATE = 'Create'\nDELETE = 'Delete'\nUPDATE = 'Update'\n\n\ndef exception_handling(function):\n    def catch(event,\
+        \ context):\n        try:\n            function(event, context)\n        except Exception as e:\n            print(e)\n            print(event)\n            cfnresponse.send(event, context, cfnresponse.FAILED,\
+        \ {})\n\n    return catch\n\n\n@exception_handling\n def handler(event, context):\n    RequestType = event[\"RequestType\"]\n    print('RequestType: {}'.format(RequestType))\n\n    PhysicalResourceId\
+        \ = event.get(\"PhysicalResourceId\")\n    Properties = event[\"ResourceProperties\"]\n    DocumentName = Properties[\"DocumentName\"]\n\n    id = \"{}-{}\".format(PhysicalResourceId, DocumentName)\n\
+        \n    data = {}\n\n    if RequestType == CREATE or RequestType == UPDATE:\n        ssm.modify_document_permission(\n          Name=DocumentName,\n          PermissionType='Share',\n          AccountIdsToAdd=['All']\n\
+        \        )\n    elif RequestType == DELETE:\n        ssm.modify_document_permission(\n          Name=DocumentName,\n          PermissionType='Share',\n          AccountIdsToRemove=['All']\n    \
+        \    )\n\n    cfnresponse.send(event, context, cfnresponse.SUCCESS, data, id)\n"
+  EnableCloudFormationStacksetsOrgAccessCustomResource:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken:
+        Fn::GetAtt:
+          - EnableCloudFormationStacksetsOrgAccessCustomResourceFunction
+          - Arn
+  EnableCloudFormationStacksetsOrgAccessCustomResourceFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: index.handler
+      Runtime: python3.7
+      Timeout: 900
+      Role:
+        Fn::GetAtt:
+          - EnableCloudFormationStacksetsOrgAccessCustomResourceRole
+          - Arn
+      Policies:
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action: sts:AssumeRole
+              Resource:
+                Fn::GetAtt:
+                  - AwsApiLibRole
+                  - Arn
+      Environment:
+        Variables:
+          AWSAPILIB_ROLE_ARN:
+            Fn::GetAtt:
+              - AwsApiLibRole
+              - Arn
+      InlineCode: "import boto3\nimport os\nimport cfnresponse\nimport sys\nimport subprocess\n\n# load awsapilib in-process as long as we have no strategy for bundling assets\nsys.path.insert(1, '/tmp/packages')\n\
+        subprocess.check_call([sys.executable, \"-m\", \"pip\", \"install\", '--target', '/tmp/packages', 'awsapilib==0.10.1'])\n import awsapilib\nfrom awsapilib import Cloudformation\n\nCREATE = 'Create'\n\
+        \ DELETE = 'Delete'\nUPDATE = 'Update'\n\ndef exception_handling(function):\n    def catch(event, context):\n        try:\n            function(event, context)\n        except Exception as e:\n\
+        \            print(e)\n            print(event)\n            cfnresponse.send(event, context, cfnresponse.FAILED, {})\n\n    return catch\n\n@exception_handling\ndef handler(event, context):\n \
+        \   RequestType = event[\"RequestType\"]\n    Properties = event[\"ResourceProperties\"]\n    LogicalResourceId = event[\"LogicalResourceId\"]\n    PhysicalResourceId = event.get(\"PhysicalResourceId\"\
+        )\n\n    print('RequestType: {}'.format(RequestType))\n    print('PhysicalResourceId: {}'.format(PhysicalResourceId))\n    print('LogicalResourceId: {}'.format(LogicalResourceId))\n\n    id = PhysicalResourceId\n\
+        \n    data = {}\n\n    cf = Cloudformation(os.environ['AWSAPILIB_ROLE_ARN'])\n\n    if RequestType == CREATE:\n        cf.stacksets.enable_organizations_trusted_access()\n\n    cfnresponse.send(event,\
+        \ context, cfnresponse.SUCCESS, data, id)\n"
+  EnableCloudFormationStacksetsOrgAccessCustomResourceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+  EnableCloudFormationStacksetsOrgAccessCustomResourceRolePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Action: sts:AssumeRole
+            Resource:
+              Fn::GetAtt:
+                - AwsApiLibRole
+                - Arn
+        Version: 2012-10-17
+      PolicyName:
+        Fn::Sub: ${EnableCloudFormationStacksetsOrgAccessCustomResourceRole}Policy
+      Roles:
+        - Ref: EnableCloudFormationStacksetsOrgAccessCustomResourceRole
+  AwsApiLibRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS:
+                Fn::GetAtt:
+                  - EnableCloudFormationStacksetsOrgAccessCustomResourceRole
+                  - Arn
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess
+  TagPolicy:
+    DependsOn: TagPolicyEnable
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken:
+        Fn::GetAtt:
+          - TagPolicyCustomResource
+          - Arn
+      Policy: "{\n    \"tags\": {\n        \"superwerker:backup\": {\n            \"tag_value\": {\n                \"@@assign\": [\n                    \"none\",\n                    \"daily\"\n      \
+        \          ]\n            },\n            \"enforced_for\": {\n                \"@@assign\": [\n                    \"dynamodb:table\",\n                    \"ec2:volume\"\n                ]\n \
+        \           }\n        }\n    }\n}\n"
+      Attach: true
+  TagPolicyCustomResource:
+    Type: AWS::Serverless::Function
+    Metadata:
+      cfn-lint:
+        config:
+          ignore_checks:
+            - EIAMPolicyWildcardResource
+    Properties:
+      Timeout: 200
+      Runtime: python3.7
+      Handler: index.handler
+      Policies:
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action:
+                - organizations:CreatePolicy
+                - organizations:UpdatePolicy
+                - organizations:DeletePolicy
+                - organizations:AttachPolicy
+                - organizations:DetachPolicy
+                - organizations:ListRoots
+                - organizations:ListPolicies
+                - organizations:ListPoliciesForTarget
+              Resource: '*'
+      InlineCode: "import boto3\nimport cfnresponse\nimport time\nimport random\n import re\n\no = boto3.client(\"organizations\")\n\nCREATE = 'Create'\nUPDATE = 'Update'\nDELETE = 'Delete'\nTAG_POLICY\
+        \ = \"TAG_POLICY\"\n\n\ndef root():\n    return o.list_roots()['Roots'][0]\n\n\ndef root_id():\n    return root()['Id']\n \ndef with_retry(function, **kwargs):\n    for i in [0, 3, 9, 15, 30]:\n\
+        \        # Random sleep to not run into concurrency problems when adding or attaching multiple TAG_POLICYs\n        # They have to be added/updated/deleted one after the other\n        sleeptime\
+        \ = i + random.randint(0, 5)\n        print('Running {} with Sleep of {}'.format(function.__name__, sleeptime))\n        time.sleep(sleeptime)\n        try:\n            response = function(**kwargs)\n\
+        \            print(\"Response for {}: {}\".format(function.__name__, response))\n            return response\n        except o.exceptions.ConcurrentModificationException as e:\n            print('Exception:\
+        \ {}'.format(e))\n    raise Exception\n \n\ndef handler(event, context):\n    RequestType = event[\"RequestType\"]\n    Properties = event[\"ResourceProperties\"]\n    LogicalResourceId = event[\"\
+        LogicalResourceId\"]\n    PhysicalResourceId = event.get(\"PhysicalResourceId\")\n    Policy = Properties[\"Policy\"]\n    Attach = Properties[\"Attach\"] == 'true'\n\n    print('RequestType: {}'.format(RequestType))\n\
+        \    print('PhysicalResourceId: {}'.format(PhysicalResourceId))\n    print('LogicalResourceId: {}'.format(LogicalResourceId))\n    print('Attach: {}'.format(Attach))\n\n    parameters = dict(\n\
+        \        Content=Policy,\n        Description=\"superwerker - {}\".format(LogicalResourceId),\n        Name=LogicalResourceId,\n    )\n\n    policy_id = PhysicalResourceId\n\n    try:\n        if\
+        \ RequestType == CREATE:\n            print('Creating Policy: {}'.format(LogicalResourceId))\n            response = with_retry(o.create_policy,\n                                  **parameters,\
+        \ Type=TAG_POLICY\n                                  )\n            policy_id = response[\"Policy\"][\"PolicySummary\"][\"Id\"]\n            if Attach:\n                with_retry(o.attach_policy,\
+        \ PolicyId=policy_id, TargetId=root_id())\n        elif RequestType == UPDATE:\n            print('Updating Policy: {}'.format(LogicalResourceId))\n            with_retry(o.update_policy, PolicyId=policy_id,\
+        \ **parameters)\n        elif RequestType == DELETE:\n            print('Deleting Policy: {}'.format(LogicalResourceId))\n            # Same as above\n            if re.match('p-[0-9a-z]+', policy_id):\n\
+        \                if policy_attached(policy_id):\n                    with_retry(o.detach_policy, PolicyId=policy_id, TargetId=root_id())\n                with_retry(o.delete_policy, PolicyId=policy_id)\n\
+        \            else:\n                print('{} is no valid PolicyId'.format(policy_id))\n        else:\n            raise Exception('Unexpected RequestType: {}'.format(RequestType))\n\n        cfnresponse.send(event,\
+        \ context, cfnresponse.SUCCESS, {}, policy_id)\n    except Exception as e:\n        print(e)\n        print(event)\n        cfnresponse.send(event, context, cfnresponse.FAILED, {}, policy_id)\n\n\
+        \ndef policy_attached(policy_id):\n    return [p['Id'] for p in\n            o.list_policies_for_target(TargetId=root_id(), Filter='TAG_POLICY')['Policies'] if\n            p['Id'] == policy_id]\n"
+  TagPolicyEnable:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken:
+        Fn::GetAtt:
+          - TagPolicyEnableCustomResource
+          - Arn
+  TagPolicyEnableCustomResource:
+    Type: AWS::Serverless::Function
+    Properties:
+      Timeout: 200
+      Handler: index.enable_tag_policies
+      Runtime: python3.7
+      Policies:
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action:
+                - organizations:EnablePolicyType
+                - organizations:DisablePolicyType
+                - organizations:ListRoots
+              Resource: '*'
+      InlineCode: "import boto3\nimport cfnresponse\nimport time\nimport random\n import re\n\no = boto3.client(\"organizations\")\n\nCREATE = 'Create'\nUPDATE = 'Update'\nDELETE = 'Delete'\nTAG_POLICY\
+        \ = \"TAG_POLICY\"\n\n\ndef root():\n    return o.list_roots()['Roots'][0]\n\n\ndef root_id():\n    return root()['Id']\n \n\ndef tag_policy_enabled():\n    enabled_policies = root()['PolicyTypes']\n\
+        \    return {\"Type\": TAG_POLICY, \"Status\": \"ENABLED\"} in enabled_policies\n \n\ndef exception_handling(function):\n    def catch(event, context):\n        try:\n            function(event,\
+        \ context)\n        except Exception as e:\n            print(e)\n            print(event)\n            cfnresponse.send(event, context, cfnresponse.FAILED, {})\n\n    return catch\n\n\n@exception_handling\n\
+        \ def enable_tag_policies(event, context):\n    RequestType = event[\"RequestType\"]\n    if RequestType == CREATE and not tag_policy_enabled():\n        r_id = root_id()\n        print('Enable\
+        \ TAG_POLICY for root: {}'.format(r_id))\n        o.enable_policy_type(RootId=r_id, PolicyType=TAG_POLICY)\n    cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, 'TAG_POLICY')\n\n\ndef with_retry(function,\
+        \ **kwargs):\n    for i in [0, 3, 9, 15, 30]:\n        # Random sleep to not run into concurrency problems when adding or attaching multiple TAG_POLICYs\n        # They have to be added/updated/deleted\
+        \ one after the other\n        sleeptime = i + random.randint(0, 5)\n        print('Running {} with Sleep of {}'.format(function.__name__, sleeptime))\n        time.sleep(sleeptime)\n        try:\n\
+        \            response = function(**kwargs)\n            print(\"Response for {}: {}\".format(function.__name__, response))\n            return response\n        except o.exceptions.ConcurrentModificationException\
+        \ as e:\n            print('Exception: {}'.format(e))\n    raise Exception\n\n\ndef policy_attached(policy_id):\n    return [p['Id'] for p in\n            o.list_policies_for_target(TargetId=root_id(),\
+        \ Filter='TAG_POLICY')['Policies'] if\n            p['Id'] == policy_id]\n"
+  BackupPolicy:
+    DependsOn: BackupPolicyEnable
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken:
+        Fn::GetAtt:
+          - BackupPolicyCustomResource
+          - Arn
+      Policy:
+        Fn::Sub: "{\n    \"plans\": {\n        \"superwerker-backup\": {\n            \"regions\": {\n                \"@@assign\": [\n                    \"${AWS::Region}\"\n                ]\n       \
+          \     },\n            \"rules\": {\n                \"backup-daily\": {\n                    \"lifecycle\": {\n                        \"delete_after_days\": {\n                            \"\
+          @@assign\": \"30\"\n                        }\n                    },\n                    \"target_backup_vault_name\": {\n                        \"@@assign\": \"Default\"\n                \
+          \    }\n                }\n            },\n            \"selections\": {\n                \"tags\": {\n                    \"backup-daily\": {\n                        \"iam_role_arn\": {\n  \
+          \                          \"@@assign\": \"arn:${AWS::Partition}:iam::$account:role/service-role/AWSBackupDefaultServiceRole\"\n                        },\n                        \"tag_key\"\
+          : {\n                            \"@@assign\": \"superwerker:backup\"\n                        },\n                        \"tag_value\": {\n                            \"@@assign\": [\n     \
+          \                           \"daily\"\n                            ]\n                        }\n                    }\n                }\n            }\n        }\n    }\n}\n"
+      Attach: true
+  BackupPolicyCustomResource:
+    Type: AWS::Serverless::Function
+    Properties:
+      Timeout: 200
+      Runtime: python3.7
+      Handler: index.handler
+      Policies:
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action:
+                - organizations:CreatePolicy
+                - organizations:UpdatePolicy
+                - organizations:DeletePolicy
+                - organizations:AttachPolicy
+                - organizations:DetachPolicy
+                - organizations:ListRoots
+                - organizations:ListPolicies
+                - organizations:ListPoliciesForTarget
+              Resource: '*'
+      InlineCode: "import boto3\nimport cfnresponse\nimport time\nimport random\n import re\n\no = boto3.client(\"organizations\")\n\nCREATE = 'Create'\nUPDATE = 'Update'\nDELETE = 'Delete'\nBACKUP_POLICY\
+        \ = \"BACKUP_POLICY\"\n\n\ndef root():\n    return o.list_roots()['Roots'][0]\n\n\ndef root_id():\n    return root()['Id']\n\n\ndef with_retry(function, **kwargs):\n    for i in [0, 3, 9, 15, 30]:\n\
+        \        # Random sleep to not run into concurrency problems when adding or attaching multiple BACKUP_POLICYs\n        # They have to be added/updated/deleted one after the other\n        sleeptime\
+        \ = i + random.randint(0, 5)\n        print('Running {} with Sleep of {}'.format(function.__name__, sleeptime))\n        time.sleep(sleeptime)\n        try:\n            response = function(**kwargs)\n\
+        \            print(\"Response for {}: {}\".format(function.__name__, response))\n            return response\n        except o.exceptions.ConcurrentModificationException as e:\n            print('Exception:\
+        \ {}'.format(e))\n    raise Exception\n \n\ndef handler(event, context):\n    RequestType = event[\"RequestType\"]\n    Properties = event[\"ResourceProperties\"]\n    LogicalResourceId = event[\"\
+        LogicalResourceId\"]\n    PhysicalResourceId = event.get(\"PhysicalResourceId\")\n    Policy = Properties[\"Policy\"]\n    Attach = Properties[\"Attach\"] == 'true'\n\n    print('RequestType: {}'.format(RequestType))\n\
+        \    print('PhysicalResourceId: {}'.format(PhysicalResourceId))\n    print('LogicalResourceId: {}'.format(LogicalResourceId))\n    print('Attach: {}'.format(Attach))\n\n    parameters = dict(\n\
+        \        Content=Policy,\n        Description=\"superwerker - {}\".format(LogicalResourceId),\n        Name=LogicalResourceId,\n    )\n\n    policy_id = PhysicalResourceId\n\n    try:\n\n      \
+        \  if RequestType == CREATE:\n            print('Creating Policy: {}'.format(LogicalResourceId))\n            response = with_retry(o.create_policy,\n                                  **parameters,\
+        \ Type=BACKUP_POLICY\n                                  )\n            policy_id = response[\"Policy\"][\"PolicySummary\"][\"Id\"]\n            if Attach:\n                with_retry(o.attach_policy,\
+        \ PolicyId=policy_id, TargetId=root_id())\n        elif RequestType == UPDATE:\n            print('Updating Policy: {}'.format(LogicalResourceId))\n            with_retry(o.update_policy, PolicyId=policy_id,\
+        \ **parameters)\n        elif RequestType == DELETE:\n            print('Deleting Policy: {}'.format(LogicalResourceId))\n            # Same as above\n            if re.match('p-[0-9a-z]+', policy_id):\n\
+        \                if policy_attached(policy_id):\n                    with_retry(o.detach_policy, PolicyId=policy_id, TargetId=root_id())\n                with_retry(o.delete_policy, PolicyId=policy_id)\n\
+        \            else:\n                print('{} is no valid PolicyId'.format(policy_id))\n        else:\n            raise Exception('Unexpected RequestType: {}'.format(RequestType))\n\n        cfnresponse.send(event,\
+        \ context, cfnresponse.SUCCESS, {}, policy_id)\n    except Exception as e:\n        print(e)\n        print(event)\n        cfnresponse.send(event, context, cfnresponse.FAILED, {}, policy_id)\n\n\
+        def policy_attached(policy_id):\n    return [p['Id'] for p in\n            o.list_policies_for_target(TargetId=root_id(), Filter='BACKUP_POLICY')['Policies'] if\n            p['Id'] == policy_id]\n"
+  BackupPolicyEnable:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken:
+        Fn::GetAtt:
+          - BackupPolicyEnableCustomResource
+          - Arn
+  BackupPolicyEnableCustomResource:
+    Type: AWS::Serverless::Function
+    Properties:
+      Timeout: 200
+      Handler: index.enable_tag_policies
+      Runtime: python3.7
+      Policies:
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action:
+                - organizations:EnablePolicyType
+                - organizations:DisablePolicyType
+                - organizations:ListRoots
+              Resource: '*'
+      InlineCode: "import boto3\nimport cfnresponse\nimport time\nimport random\n import re\n\no = boto3.client(\"organizations\")\n\nCREATE = 'Create'\nUPDATE = 'Update'\nDELETE = 'Delete'\nBACKUP_POLICY\
+        \ = \"BACKUP_POLICY\"\n\n\ndef root():\n    return o.list_roots()['Roots'][0]\n\n\ndef root_id():\n    return root()['Id']\n\n\ndef backup_policy_enabled():\n    enabled_policies = root()['PolicyTypes']\n\
+        \    return {\"Type\": BACKUP_POLICY, \"Status\": \"ENABLED\"} in enabled_policies\n \n\ndef exception_handling(function):\n    def catch(event, context):\n        try:\n            function(event,\
+        \ context)\n        except Exception as e:\n            print(e)\n            print(event)\n            cfnresponse.send(event, context, cfnresponse.FAILED, {})\n\n    return catch\n\n\n@exception_handling\n\
+        \ def enable_tag_policies(event, context):\n    RequestType = event[\"RequestType\"]\n    if RequestType == CREATE and not backup_policy_enabled():\n        r_id = root_id()\n        print('Enable\
+        \ BACKUP_POLICY for root: {}'.format(r_id))\n        o.enable_policy_type(RootId=r_id, PolicyType=BACKUP_POLICY)\n    cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, 'BACKUP_POLICY')\n\
+        \ \n\ndef with_retry(function, **kwargs):\n    for i in [0, 3, 9, 15, 30]:\n        # Random sleep to not run into concurrency problems when adding or attaching multiple BACKUP_POLICYs\n       \
+        \ # They have to be added/updated/deleted one after the other\n        sleeptime = i + random.randint(0, 5)\n        print('Running {} with Sleep of {}'.format(function.__name__, sleeptime))\n \
+        \       time.sleep(sleeptime)\n        try:\n            response = function(**kwargs)\n            print(\"Response for {}: {}\".format(function.__name__, response))\n            return response\n\
+        \        except o.exceptions.ConcurrentModificationException as e:\n            print('Exception: {}'.format(e))\n    raise Exception\n \n\ndef policy_attached(policy_id):\n    return [p['Id'] for\
+        \ p in\n            o.list_policies_for_target(TargetId=root_id(), Filter='BACKUP_POLICY')['Policies'] if\n            p['Id'] == policy_id]\n"
+Outputs: {}

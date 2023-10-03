@@ -1,0 +1,63 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: AWS::Serverless-2016-10-31
+Description: Sets up Living Documentation. (qs-1s3rsr7m0)
+Parameters:
+  SuperwerkerDomain:
+    Type: String
+Resources:
+  DashboardGeneratorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Events:
+        Schedule:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 minute)
+      Handler: index.handler
+      Policies:
+        - SSMParameterReadPolicy:
+            ParameterName: superwerker/*
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action: cloudwatch:PutDashboard
+              Resource:
+                Fn::Sub: arn:${AWS::Partition}:cloudwatch::${AWS::AccountId}:dashboard/superwerker
+            - Effect: Allow
+              Action: cloudwatch:DescribeAlarms
+              Resource:
+                Fn::Sub: arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:superwerker-RootMailReady
+      Environment:
+        Variables:
+          SUPERWERKER_DOMAIN:
+            Ref: SuperwerkerDomain
+      InlineCode: "import boto3\nimport json\nimport os\nfrom datetime import datetime\ncw = boto3.client(\"cloudwatch\")\nssm = boto3.client(\"ssm\")\n\ndef handler(event, context):\n  dns_domain =os.environ['SUPERWERKER_DOMAIN']\n\
+        \  superwerker_config = {}\n  for ssm_parameter in ssm.get_parameters(Names=['/superwerker/domain_name_servers'])['Parameters']:\n    superwerker_config[ssm_parameter['Name']] = ssm_parameter['Value']\n\
+        \n  rootmail_ready_alarm_state = cw.describe_alarms(AlarmNames=['superwerker-RootMailReady'])['MetricAlarms'][0]['StateValue']\n  if rootmail_ready_alarm_state == 'OK':\n    dns_delegation_text\
+        \ = \"\"\"\n#### \U0001F3E0 {domain}\n#### ✅ DNS configuration is set up correctly.\n\"\"\".format(\n  domain=dns_domain,\n)\n  else:\n    if '/superwerker/domain_name_servers' in superwerker_config:\n\
+        \      dns_delegation_text = \"\"\"\n#### \U0001F3E0 {domain}\n#### ❌ DNS configuration needed.\n\n&nbsp;\n\n### Next Steps\n\nPlease create the following NS records for your domain:\n\n```\n{ns[0]}\n\
+        {ns[1]}\n{ns[2]}\n{ns[3]}\n```\n\"\"\".format(domain=dns_domain, ns=superwerker_config['/superwerker/domain_name_servers'].split(','))\n    else:\n      dns_delegation_text = '### DNS Setup pending'\n\
+        \  markdown = \"\"\"\n# [superwerker](https://github.com/superwerker/superwerker)\n&nbsp;\n\n{dns_delegation}\n\n&nbsp;\n## Next steps - finish setup\n&nbsp;\n\n### SSO Setup\n\n- Check your e-mail\
+        \ inbox for \"Invitation to join AWS Single Sign-On\" and follow the setups to accept the invitation. After finishing, log in into AWS via the AWS SSO portal.\n- [Configure AWS SSO with identity\
+        \ providers](https://docs.aws.amazon.com/singlesignon/latest/userguide/manage-your-identity-source-idp.html), e.g. [Azure AD](https://controltower.aws-management.tools/aa/sso/azure_ad/), [Google\
+        \ Workspace](https://controltower.aws-management.tools/aa/sso/google/), [Okta](https://controltower.aws-management.tools/aa/sso/okta/), [OneLogin](https://controltower.aws-management.tools/aa/sso/onelogin/),\
+        \ to login to AWS with your existing login mechanisms.\n\n&nbsp;\n### Organizations Setup\n\n- Set up recommended organizational units via [Control Tower](/controltower/home/organizationunits?region={region})\
+        \ acording to the [Organizing Your AWS Environment Using Multiple Accounts whitepaper](https://docs.aws.amazon.com/whitepapers/latest/organizing-your-aws-environment/production-starter-organization.html)\n\
+        \ - Create a `Workloads_Prod` organizational unit for production workloads\n - Create a `Workloads_Test` organizational unit for test/dev workloads\n\n&nbsp;\n## What now? Standard operating procedures\n\
+        \n- Create AWS accounts for each of your workloads via the [Control Tower Account Factory](/controltower/home/accountfactory/createAccount?region={region}) (for \"Account email\" use `root+<random_suffix>@{dns_domain}`)\n\
+        - Check [OpsCenter for incoming events and messages](/systems-manager/opsitems?region={region}#list_ops_items_filters=Status:Equal:Open_InProgress&activeTab=OPS_ITEMS)\n- Check [AWS Security Hub](/securityhub/home?region={region})\
+        \ for security best practise violations (login to Audit Account via AWS SSO portal first)\n- Check [Amazon GuardDuty](/guardduty/home?region={region}#/findings) for threats against your AWS accounts\
+        \ (login to Audit Account via AWS SSO portal first)\n- Exclude resources from being backed-up by changing the `superwerker:backup` tag to `none`\n\n&nbsp;\n## Help and more information\n\n- [superwerker\
+        \ on GitHub](https://github.com/superwerker/superwerker)\n- [Architecture Decision Records](https://github.com/superwerker/superwerker/tree/main/docs/adrs)\n- [#superwerker](https://og-aws.slack.com/archives/C01CQ34TC93)\
+        \ Slack channel in [og-aws](http://slackhatesthe.cloud)\n- [Mailing list](https://groups.google.com/forum/#!forum/superwerker/join)\n\n&nbsp;\n\n```\nUpdated at {current_time} (use browser reload\
+        \ to refresh)\n```\n  \"\"\".format(dns_delegation=dns_delegation_text, current_time=datetime.now(), region=os.environ['AWS_REGION'], dns_domain=dns_domain)\n  cw.put_dashboard(\n    DashboardName='superwerker',\n\
+        \    DashboardBody=json.dumps({\"widgets\": [{\"type\": \"text\",\"x\": 0,\"y\": 0,\"width\": 24,\"height\": 20,\"properties\": {\"markdown\": markdown}}]}),\n  )\n"
+      Runtime: python3.7
+      Timeout: 60
+Metadata:
+  SuperwerkerVersion: 0.13.2
+  cfn-lint:
+    config:
+      ignore_checks:
+        - E9007
+Outputs: {}
