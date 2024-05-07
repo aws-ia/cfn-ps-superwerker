@@ -1,4 +1,4 @@
-## superwerker on the AWS Cloud—Quick Start
+## DEPRECATED: please visit https://github.com/superwerker/superwerker
 
 For architectural details, step-by-step instructions, and customization options, see the [deployment guide](https://aws-quickstart.github.io/quickstart-superwerker/).
 
